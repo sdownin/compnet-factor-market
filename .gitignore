@@ -1,0 +1,36 @@
+*.png
+*.doc
+*.docx
+*.xlsx
+*.xls
+*.jpg
+*.jpeg
+*.csv*
+*.zip*
+*.tar*
+*.gz*
+*.bz*
+*.pdf
+*.tmp*
+*.ppt
+*.pptx
+*.RData
+*.RDataTmp
+*.RDat*
+*.rda*
+*.rds*
+*.Rhistory*
+*.graph*
+*.db
+*.bgs
+*.luu
+*.rhes
+*.shess
+*.swp*
+glmmadmb/*
+
+# CPython bitcode cache
+python/__pycache__/*
+
+# include images in tutorial dir
+!data/amj_run_TERGM_tutorial_1_files/figure-html/**
