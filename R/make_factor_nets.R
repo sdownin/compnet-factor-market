@@ -269,11 +269,21 @@ plot2 <- function(gx, layout=layout.fruchterman.reingold, focal.firm=NA, fam='sa
   par(.par$mar)
 }
 
-plot2(g)
+plot2(g.f)
 
 
+##=================
+## GERGM
+##-----------------
+library(GERGM)
+library(parallel)
 
+net.f <- igraph::as_adjacency_matrix(g.f, attr = 'weight', sparse = F)
 
+m0 <- net.f ~ edges(method='endogenous') + out2stars + in2stars + ctriads + mutual + ttriads 
+
+fit0 <- gergm(m0, 
+              use_MPLE_only = T, parallel = T, cores = detectCores())
 
 
 ## SUMMARY OF PEOPLE IN COMPNET
