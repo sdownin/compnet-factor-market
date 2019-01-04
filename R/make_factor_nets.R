@@ -56,7 +56,7 @@ f.force.overwrite <- FALSE ## if network files in directory should be overwritte
 # for (i in 1:length(firms.todo)) {
 i <- 1 ## index
 tyear <- 2016
-t1 <- sprintf('%d-01-01',tyear-1) ## inclusive start date 'YYYY-MM-DD'
+t1 <- sprintf('%d-01-01',tyear-2) ## inclusive start date 'YYYY-MM-DD'
 t2 <- sprintf('%d-12-31',tyear) ## inclusive end date 'YYYY-MM-DD'
 
 ## cache focal firm name
@@ -96,7 +96,7 @@ dim(jbi)
 ## Create Human Capital Flow Data 
 ##----------------------------------------
 ## [job1::ppl--org1]-->[job2::ppl--org2]
-hcfcols <- c('person_uuid','org_uuid','company_name_unique','started_on','is_current','title','job_role','executive_role','advisory_role')
+hcfcols <- c('is_current','title','job_role','executive_role','advisory_role')
 hcf <- data.frame()  ## HCF dataframe
 
 for (j in 1:nrow(jbi)) {
@@ -120,19 +120,23 @@ for (j in 1:nrow(jbi)) {
   old_new_gap_days <- ifelse(any(is.na(c(jprev$ended_on, jbi_j$started_on))), NA, as.numeric(ymd(jbi_j$started_on)-ymd(jprev$ended_on)))
   new_tenure_days  <- ifelse(any(is.na(c(jbi_j$ended_on, jbi_j$started_on))), NA, as.numeric(ymd(jbi_j$ended_on)-ymd(jbi_j$started_on)))
   
-  ## from company name unqiue
-  from_company_name_unique <- cb$co$company_name_unique[which(cb$co$company_uuid==jprev$org_uuid)]
+  ##  company name unqiue
+  from_name_unique <- cb$co$company_name_unique[which(cb$co$company_uuid==jprev$org_uuid)]
+  from_name_unique <- ifelse(length(from_name_unique)>0, from_name_unique, cb$co$company_name[which(cb$co$company_uuid==jprev$org_uuid)])
   
   ## tmp df for this human capital flow relation
   .tmp.hcf <- data.frame(
       from_company_uuid = jprev$org_uuid,
       to_company_uuid = jbi_j$org_uuid,
-      from_company_name_unique = ifelse(length(from_company_name_unique)>0,from_company_name_unique,NA),
+      from_company_name_unique = ifelse(length(from_name_unique)>0 & !is.na(from_name_unique), from_name_unique, jprev$org_uuid),
       to_company_name_unique = jbi_j$company_name_unique,
+      person_uuid = jbi_j$person_uuid,
       old_started_on = jprev$started_on,
       old_ended_on = jprev$ended_on,
       old_tenure_days = old_tenure_days,
       old_new_gap_days = old_new_gap_days,
+      new_started_on = jbi_j$started_on,
+      new_ended_on = jbi_j$ended_on,
       new_tenure_days = new_tenure_days,
       stringsAsFactors = F
     )
@@ -144,6 +148,130 @@ for (j in 1:nrow(jbi)) {
   ## append job
   hcf <- rbind(hcf, .tmp.hcf)
 }
+
+## sort by new job started_on
+hcf <- hcf[order(hcf$new_started_on, decreasing = F), ]
+
+##--------------------------
+## KSAOs Heuristic FUnction
+##--------------------------
+hcf$ksao <- apply(hcf[,c('job_role', 'executive_role', 'advisory_role')], 1, function(x){
+  if (x[1]=='t' & x[2]=='t') return(3) ## Executive Job
+  if (x[3]=='t') return(2)             ## advisory role
+  if (x[1]=='t') return(1)             ## nonexecutive job
+  return(0)
+})
+
+
+## write human capital flows edge list to CSV
+hcf.file <- sprintf('human_capital_flow_EDGES_%s_tyear%s_t1%s_t2%s_pd%s_d%s.csv',name_i,tyear,t1,t2,yrpd,d)
+write.csv(hcf, file = file.path(data_dir,hcf.file), row.names = F)
+
+##==================================
+## CREATE Human Capital Flows Graph
+##----------------------------------
+makeHcfGraph <- function(el, 
+                         vertdf,
+                         vertNameCol='company_name_unique',
+                         srcCol='from_company_name_unique', 
+                         trgCol='to_company_name_unique', 
+                         weightCol='ksao',
+                         vertAttrs=NA,
+                         simplify.edges=TRUE)
+{
+  if(is.na(vertAttrs)) {
+    vertAttrs <- c('company_name','founded_on','founded_year','closed_on','closed_year','category_list',
+                   'category_group_list','state_code','country_code','region','city','acquired_on',
+                   'company_gvkey','company_uuid','domain','status_update',
+                   'company_cusip','company_cusip_6','company_sic','employee_count')
+  }
+  ## remove missing names
+  el <- el[which(el[,srcCol]!="" & el[,trgCol]!=""), ]
+  ## weights
+  el$weight <- el[,weightCol]
+  ## rearrange cols
+  idx.src <- which(names(el) == srcCol)
+  idx.trg <- which(names(el) == trgCol)
+  idx.oth <- which( ! (1:ncol(el)) %in% c(idx.src,idx.trg) )
+  el <- el[,c(idx.src, idx.trg, idx.oth)]
+  ## make vertex df
+  verts <- data.frame(company_name_unique=unique(c(el[,srcCol],el[,trgCol])), stringsAsFactors = F)
+  verts <- merge(x=verts,y=vertdf[,c(vertNameCol,vertAttrs[vertAttrs%in%names(vertdf)])],
+                 by.x=vertNameCol, by.y=vertNameCol, all.x=T,all.y=F)  
+  ## make graph
+  g <- igraph::graph.data.frame(d = el, directed = T, vertices = verts)
+  V(g)$orig.vid <- as.integer(V(g))
+  ## Simplify edges
+  if (simplify.edges) {
+      edge.attr.comb = list(weight='sum')
+      g <- igraph::simplify(g, remove.loops=T, remove.multiple=T, edge.attr.comb=edge.attr.comb)
+  }
+  return(g)
+}
+
+## MAKE FACTOR GRAPH
+g.f <- makeHcfGraph(hcf, cb$co)
+
+## SAVE FACTOR GRAPH
+g.f.file <- sprintf('g_hcf_%s_tyear%s_t1%s_t2%s_pd%s_d%s.graphml',name_i,tyear,t1,t2,yrpd,d)
+write.graph(g.f, file = file.path(data_dir, 'graphs', g.f.file), format = 'graphml')
+
+
+##===============
+## Style Formatted Plot
+##---------------
+plot2 <- function(gx, layout=layout.fruchterman.reingold, focal.firm=NA, fam='sans', edge.curved=F, seed=11111, ...)
+{
+  par(mar=c(.1,.1,.1,.1))
+  vAttrs <- igraph::list.vertex.attributes(gx) 
+  set.seed(seed)
+  vertex.label <- sapply(1:vcount(gx), function(x) {
+      if("name" %in% vAttrs) return(V(gx)$name[x])
+      if("company_name_unique" %in% vAttrs) return(V(gx)$company_name_unique[x])
+      if("vertex.names" %in% vAttrs) return(V(gx)$vertex.names[x])
+    })
+  indeg <- igraph::degree(gx, mode = 'in')
+  vertes.label2 <- sapply(1:vcount(gx), function(i){
+    return(ifelse(indeg[i] > 0, vertex.label[i], ""))
+  })
+  plot(gx, 
+       layout = layout, 
+       layout.par = list(), 
+       labels = NULL, 
+       label.color = 'black',
+       label.font = NULL, 
+       label.degree = -pi/4, 
+       label.dist = 0, 
+       vertex.label=vertes.label2,
+       vertex.label.cex=.3 + .2*log(igraph::degree(gx,mode='total')),
+       vertex.color = rgb(.1,.1,.1,.05),
+       # vertex.shape = vshapes,
+       vertex.size = 3 + 1.5*log(igraph::degree(gx,mode='total')), 
+       # vertex.frame.color=framecols, 
+       # vertex.frame.width=framewidths, 
+       vertex.label.family=fam,  # Font family of the label (e.g."Times", "Helvetica")
+       vertex.label.font=1,  # Font: 1 plain, 2 bold, 3, italic, 4 bold italic, 5 symbol
+       vertex.label.color='darkblue',
+       edge.color = "grey", 
+       edge.width = 1 *E(gx)$weight,
+       edge.arrow.size = .2 *E(gx)$weight,
+       edge.label = "", 
+       edge.lty=1, 
+       margin=0,
+       loop.angle=0, 
+       axes = FALSE, 
+       xlab = "", 
+       ylab = "",
+       xlim=c(-1,1), 
+       ylim=c(-1,1), 
+       edge.curved=edge.curved,
+       ...)
+  par(.par$mar)
+}
+
+plot2(g)
+
+
 
 
 
