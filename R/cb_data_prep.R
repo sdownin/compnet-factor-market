@@ -25,7 +25,7 @@ library(stringr, quietly = T)
 {
 
   ## DATAFILE FOR CB DATA LIST OBJECT
-  tmp_cb_file  <- 'cb_v2.rds'  ## v2:  founded_on date updated
+  tmp_cb_file  <- 'cb_v3_jobs.rds'  ## v2:  founded_on date updated
 
   ## DIRECTORIES
   tmp_data_dir <- "C:\\Users\\T430\\Google Drive\\PhD\\Dissertation\\crunchbase\\crunchbase_export_20161024"
@@ -33,7 +33,9 @@ library(stringr, quietly = T)
   
   ## if file already saved, load and return
   if (file.exists(file.path(tmp_data_dir, tmp_cb_file))) {
+    cat('loading rds data object...')
     cb <- readRDS(file.path(tmp_data_dir, tmp_cb_file))
+    cat('done.\n')
     return(cb)
   }
   
@@ -231,9 +233,9 @@ library(stringr, quietly = T)
   # cb$csv$ev        <- 'events.csv'
   # cb$csv$ev_rel    <- 'event_relationships.csv'
   # cb$csv$categ     <- 'category_groups.csv'
-  # cb$csv$jobs      <- 'jobs.csv'
-  # cb$csv$ppl       <- 'people.csv'
-  # cb$csv$ppl_desc  <- 'people_descriptions.csv'
+  cb$csv$jobs      <- 'jobs.csv'
+  cb$csv$ppl       <- 'people.csv'
+  cb$csv$ppl_desc  <- 'people_descriptions.csv'
   
   ##=================================
   ##  Data import
@@ -256,9 +258,9 @@ library(stringr, quietly = T)
   # ev        <- cb$readCsv(file.path(tmp_data_dir, cb$csv$ev))
   # ev_rel    <- cb$readCsv(file.path(tmp_data_dir, cb$csv$ev_rel))
   # categ     <- cb$readCsv(file.path(tmp_data_dir, cb$csv$categ))
-  # job       <- cb$readCsv(file.path(tmp_data_dir, cb$csv$jobs))
-  # ppl       <- cb$readCsv(file.path(tmp_data_dir, cb$csv$ppl))
-  # ppl_desc  <- cb$readCsv(file.path(tmp_data_dir, cb$csv$ppl_desc))
+  job       <- cb$readCsv(file.path(tmp_data_dir, cb$csv$jobs))
+  ppl       <- cb$readCsv(file.path(tmp_data_dir, cb$csv$ppl))
+  ppl_desc  <- cb$readCsv(file.path(tmp_data_dir, cb$csv$ppl_desc))
   
   
   # cat('done.\nadding Owler data\n')
@@ -793,9 +795,9 @@ library(stringr, quietly = T)
   # cb$ev        <- ev
   # cb$ev_rel    <- ev_rel
   # cb$categ     <- categ
-  # cb$job       <- job
-  # cb$ppl       <- ppl
-  # cb$ppl_desc  <- ppl_desc
+  cb$job       <- job
+  cb$ppl       <- ppl
+  cb$ppl_desc  <- ppl_desc
 
   ## RESET original working dir
   setwd(orig_work_dir)

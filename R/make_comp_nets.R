@@ -21,17 +21,15 @@ img_dir  <- file.path(work_dir, 'img')
 ## set woring dir
 setwd(work_dir)
 
-## Crunchbase Data
-cb <- source(file.path(work_dir,'R','cb_data_prep.R'))$value
-
-## full graph
 g.full <- read.graph(file.path(data_dir,'graphs','g_full.graphml'), format = 'graphml')
+
+
 
 ## set firms to create networks (focal firm or replication study focal firms)
 firms.todo <- c('qualtrics')
 
 
-## -- Compnet Settings --
+## -- settings --
 d <- 3
 yrpd <- 1
 startYr <- 2005
@@ -39,137 +37,6 @@ endYr <- 2017            ## dropping first for memory term; actual dates 2007-20
 lg.cutoff <- 1100        ## large network size cutoff to save periods seprately 
 force.overwrite <- FALSE ## if network files in directory should be overwritten
 ## --------------  
-
-## -- Factornet Settings --
-f.d <- 3
-f.yrpd <- 3
-f.startYr <- 2015
-f.endYr <- 2017            ## dropping first for memory term; actual dates 2007-2016
-f.lg.cutoff <- 1100        ## large network size cutoff to save periods seprately 
-f.force.overwrite <- FALSE ## if network files in directory should be overwritten
-## --------------  
-
-
-##----------------
-## loop here
-##----------------
-# for (i in 1:length(firms.todo)) {
-i <- 1 ## index
-tyear <- 2016
-t1 <- sprintf('%d-01-01',tyear-1) ## inclusive start date 'YYYY-MM-DD'
-t2 <- sprintf('%d-12-31',tyear) ## inclusive end date 'YYYY-MM-DD'
-
-## cache focal firm name
-name_i <- firm_i <- firms.todo[i]
-
-## compnet ego firm graph
-nets.c <- readRDS(sprintf("%s/%s_d%s.rds",firm_nets_dir,name_i,d))
-
-## copmnet for given tyear
-net.c <- nets.c[[ which(names(nets.c)==f.endYr) ]]
-g.c <- asIgraph(net.c)
-V(g.c)$name <- V(g.c)$vertex.names
-
-## ego firm competition network firm names and UUIDs
-vgcnames <- V(g.c)$name
-vgcuuids <- V(g.c)$company_uuid
-
-## JOB:  [person]--[org]
-head(cb$job)
-## PPL:  person
-head(cb$ppl)
-
-## job data for firm in comp ego net
-row.job <- which(
-  (cb$job$org_uuid %in% vgcuuids)
-  & (cb$job$started_on >= t1)
-  & (cb$job$started_on <= t2)
-)
-## jobs at companies in compnet of ego firm i
-jbi <- cb$job[row.job, ]
-jbi <- merge(jbi, cb$co[,c('company_uuid','company_name_unique')],
-             by.x='org_uuid',by.y='company_uuid',all.x=T,all.y=F)
-dim(jbi)
-
-
-##========================================
-## Create Human Capital Flow Data 
-##----------------------------------------
-## [job1::ppl--org1]-->[job2::ppl--org2]
-hcfcols <- c('person_uuid','org_uuid','company_name_unique','started_on','is_current','title','job_role','executive_role','advisory_role')
-hcf <- data.frame()  ## HCF dataframe
-
-for (j in 1:nrow(jbi)) {
-  jbi_j <- jbi[j,]
-  cat(sprintf('job %s (%.2f%s) org::%s  ppl::%s \n',j,100*j/nrow(jbi),'%',jbi_j$company_name_unique,jbi_j$person_uuid))
-  
-  ## previous jobs for person of job `j`
-  idx.jprev <- which(cb$job$person_uuid==jbi_j$person_uuid & cb$job$started_on < jbi_j$started_on)
-  jprev <- cb$job[idx.jprev, ]
-  
-  ## skip job if person has no previous job (no org-org human capital flow relation)
-  if (nrow(jprev) < 1) {
-    cat('  no previous job. skipping.\n')
-    next
-  } else { ## the most recent job before the current newjob
-    jprev <- jprev[order(jprev$started_on, decreasing = T), ][1, ]
-  }
-  
-  ## compute time differences
-  old_tenure_days  <- ifelse(any(is.na(c(jprev$started_on, jprev$ended_on))), NA, as.numeric(ymd(jprev$ended_on)-ymd(jprev$started_on)))
-  old_new_gap_days <- ifelse(any(is.na(c(jprev$ended_on, jbi_j$started_on))), NA, as.numeric(ymd(jbi_j$started_on)-ymd(jprev$ended_on)))
-  new_tenure_days  <- ifelse(any(is.na(c(jbi_j$ended_on, jbi_j$started_on))), NA, as.numeric(ymd(jbi_j$ended_on)-ymd(jbi_j$started_on)))
-  
-  ## from company name unqiue
-  from_company_name_unique <- cb$co$company_name_unique[which(cb$co$company_uuid==jprev$org_uuid)]
-  
-  ## tmp df for this human capital flow relation
-  .tmp.hcf <- data.frame(
-      from_company_uuid = jprev$org_uuid,
-      to_company_uuid = jbi_j$org_uuid,
-      from_company_name_unique = ifelse(length(from_company_name_unique)>0,from_company_name_unique,NA),
-      to_company_name_unique = jbi_j$company_name_unique,
-      old_started_on = jprev$started_on,
-      old_ended_on = jprev$ended_on,
-      old_tenure_days = old_tenure_days,
-      old_new_gap_days = old_new_gap_days,
-      new_tenure_days = new_tenure_days,
-      stringsAsFactors = F
-    )
-  
-  ## add extra hcf edge attributes
-  for (col in hcfcols) 
-    .tmp.hcf[1,col] <- unname(jbi_j[1,col])
-  
-  ## append job
-  hcf <- rbind(hcf, .tmp.hcf)
-}
-
-
-
-
-## SUMMARY OF PEOPLE IN COMPNET
-pcnt <- plyr::count(jbi$person_uuid)
-pcnt <- pcnt[order(pcnt$freq, decreasing = T), ]
-## SUMMARY OF COMPANIES IN jobs data filtered to compnent comapnies
-ocnt <- plyr::count(jbi$company_name_unique)
-ocnt <- ocnt[order(ocnt$freq, decreasing = T), ]
-print(ocnt)
-
-
-# }
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 ##----------------------------------------
