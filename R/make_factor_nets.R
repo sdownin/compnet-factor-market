@@ -15,6 +15,7 @@ library(intergraph)
 cb_dir <- "C:/Users/T430/Google Drive/PhD/Dissertation/crunchbase/crunchbase_export_20161024"
 work_dir <- "C:/Users/T430/Google Drive/PhD/Dissertation/competition networks/factor_market_rivalry/compnet-factor-market"
 data_dir <- file.path(work_dir, 'data')
+results_dir <- file.path(work_dir, 'results')
 firm_nets_dir <- file.path(data_dir, 'firm_nets')
 img_dir  <- file.path(work_dir, 'img')
 
@@ -42,7 +43,7 @@ force.overwrite <- FALSE ## if network files in directory should be overwritten
 
 ## -- Factornet Settings --
 f.d <- 3
-f.yrpd <- 3
+f.yrpd <- 4
 f.startYr <- 2015
 f.endYr <- 2017            ## dropping first for memory term; actual dates 2007-2016
 f.lg.cutoff <- 1100        ## large network size cutoff to save periods seprately 
@@ -56,7 +57,7 @@ f.force.overwrite <- FALSE ## if network files in directory should be overwritte
 # for (i in 1:length(firms.todo)) {
 i <- 1 ## index
 tyear <- 2016
-t1 <- sprintf('%d-01-01',tyear-2) ## inclusive start date 'YYYY-MM-DD'
+t1 <- sprintf('%d-01-01',tyear-(f.yrpd-1)) ## inclusive start date 'YYYY-MM-DD'
 t2 <- sprintf('%d-12-31',tyear) ## inclusive end date 'YYYY-MM-DD'
 
 ## cache focal firm name
@@ -172,6 +173,7 @@ write.csv(hcf, file = file.path(data_dir,hcf.file), row.names = F)
 ##----------------------------------
 makeHcfGraph <- function(el, 
                          vertdf,
+                         filterVertName=NA,
                          vertNameCol='company_name_unique',
                          srcCol='from_company_name_unique', 
                          trgCol='to_company_name_unique', 
@@ -180,8 +182,9 @@ makeHcfGraph <- function(el,
                          simplify.edges=TRUE)
 {
   if(is.na(vertAttrs)) {
-    vertAttrs <- c('company_name','founded_on','founded_year','closed_on','closed_year','category_list',
-                   'category_group_list','state_code','country_code','region','city','acquired_on',
+    vertAttrs <- c('company_name','founded_on','founded_year','closed_on',
+                   'closed_year','category_list','category_group_list','state_code',
+                   'country_code','region','city','acquired_on',
                    'company_gvkey','company_uuid','domain','status_update',
                    'company_cusip','company_cusip_6','company_sic','employee_count')
   }
@@ -194,6 +197,11 @@ makeHcfGraph <- function(el,
   idx.trg <- which(names(el) == trgCol)
   idx.oth <- which( ! (1:ncol(el)) %in% c(idx.src,idx.trg) )
   el <- el[,c(idx.src, idx.trg, idx.oth)]
+  ## filter vertices from given list
+  if (any(!is.na(filterVertName))) {
+    idx.rows <- which((el[,srcCol] %in% filterVertName) & (el[,trgCol] %in% filterVertName))
+    el <- el[idx.rows, ]
+  }
   ## make vertex df
   verts <- data.frame(company_name_unique=unique(c(el[,srcCol],el[,trgCol])), stringsAsFactors = F)
   verts <- merge(x=verts,y=vertdf[,c(vertNameCol,vertAttrs[vertAttrs%in%names(vertdf)])],
@@ -210,7 +218,7 @@ makeHcfGraph <- function(el,
 }
 
 ## MAKE FACTOR GRAPH
-g.f <- makeHcfGraph(hcf, cb$co)
+g.f <- makeHcfGraph(hcf, cb$co, filterVertName=V(g.c)$name)
 
 ## SAVE FACTOR GRAPH
 g.f.file <- sprintf('g_hcf_%s_tyear%s_t1%s_t2%s_pd%s_d%s.graphml',name_i,tyear,t1,t2,yrpd,d)
@@ -253,8 +261,8 @@ plot2 <- function(gx, layout=layout.fruchterman.reingold, focal.firm=NA, fam='sa
        vertex.label.font=1,  # Font: 1 plain, 2 bold, 3, italic, 4 bold italic, 5 symbol
        vertex.label.color='darkblue',
        edge.color = "grey", 
-       edge.width = 1 *E(gx)$weight,
-       edge.arrow.size = .2 *E(gx)$weight,
+       edge.width = (3/max(E(gx)$weight)) * E(gx)$weight,
+       edge.arrow.size = (4/max(E(gx)$weight)) * E(gx)$weight,
        edge.label = "", 
        edge.lty=1, 
        margin=0,
@@ -269,7 +277,7 @@ plot2 <- function(gx, layout=layout.fruchterman.reingold, focal.firm=NA, fam='sa
   par(.par$mar)
 }
 
-plot2(g.f)
+plot2(g.f, layout=layout.fruchterman.reingold)
 
 
 ##=================
@@ -278,21 +286,136 @@ plot2(g.f)
 library(GERGM)
 library(parallel)
 
+g.f.orig <- g.f
+
+##--------------------
+## Filter g.f to LARGEST CONNECTED COMPONENT
+## - comment out these lines to use 
+##   the whole factor graph (with unconncted components)
+##--------------------
+g.f.comps <- igraph::decompose(g.f)
+g.f <- g.f.comps[[ which.max(sapply(g.f.comps, vcount)) ]]
+
+##--------------------
+## DV network 
+##--------------------
+## HCF network
 net.f <- igraph::as_adjacency_matrix(g.f, attr = 'weight', sparse = F)
+## SET COLNAMES for covariate data matching
+colnames(net.f) <- V(g.f)$name ## ***IMPORATANT***
 
-m0 <- net.f ~ edges(method='endogenous') + out2stars + in2stars + ctriads + mutual + ttriads 
+##-----------------------
+## Network Covariate 
+##-----------------------
+## Compnet Distance
+vids.gf.gc <- which(V(g.c)$name %in% V(g.f)$name) 
+compdist <- igraph::distances(g.c, v = vids.gf.gc, to = vids.gf.gc, mode = 'all')
+cdvals <- compdist[compdist < Inf]
+compdist[compdist==Inf] <- max(cdvals) + round(sd(cdvals))
 
+##-----------------------
+## Node Covariate Data
+##-----------------------
+## init hcf dataframe for factor market network 
+hcf.cov.df <- data.frame(
+  name=V(g.f)$name,
+  factor_com_infomap=factor(igraph::infomap.community(g.f)$membership),
+  stringsAsFactors = F
+)
+## merge in covs from compnet
+vcdf <- igraph::as_data_frame(g.c, what="vertices")
+hcf.cov.df <- merge(hcf.cov.df, vcdf, by.x='name', by.y='name', all.x=T, all.y=F)
+## fix rownames for covariate data matching  ***IMPORTANT****
+rownames(hcf.cov.df) <- hcf.cov.df$name
+
+## model
+m0 <- net.f ~ edges + in2stars(0.7) + mutual(0.7) + ttriads + #out2stars(0.8) + ctriads +
+              sender("cent_deg") + receiver("cent_deg") + 
+              sender("cent_pow_n0_4") + receiver("cent_pow_n0_4") +
+              sender("age") +  receiver("age") + 
+              nodematch("region") + nodematch("ipo_status") +
+              nodematch("factor_com_infomap") + 
+              nodematch("com_infomap") +
+              netcov(compdist)
+
+## FIT GERGM
+N <- nrow(hcf.cov.df)
 fit0 <- gergm(m0, 
-              use_MPLE_only = T, parallel = T, cores = detectCores())
+              covariate_data = hcf.cov.df,
+              network_is_directed=TRUE,
+              number_of_networks_to_simulate = 10000,
+              thin = 0.01,
+              MCMC_burnin = 20000,
+              proposal_variance = 0.01,
+              sample_edges_at_a_time = min(199, ifelse(N%%2==0,N+1,N)), ## odd number in [3,199]
+              target_accept_rate = 0.25,  ## default 0.25
+              seed = 456,
+              convergence_tolerance = 0.5,
+              use_MPLE_only = FALSE, ## faster
+              output_directory = results_dir,
+              output_name=sprintf('gergm_fit_STRUCT_TEST_%s_tyear%s_t1%s_t2%s_pd%s_d%s.graphml',name_i,tyear,t1,t2,yrpd,d),
+              parallel = T, cores = detectCores(),
+              force_x_theta_updates=1,   ## default 1
+              force_x_lambda_updates=1,  ## default 1
+              hyperparameter_optimization = TRUE, ## recommended
+              stop_for_degeneracy = TRUE)
+## SAVE GERGM RDS
+saveRDS(fit0, file = file.path(results_dir, sprintf('gergm_fit0_%s_tyear%s_t1%s_t2%s_pd%s_d%s.rds',name_i,tyear,t1,t2,yrpd,d)))
+
+##------------------------
+## Diagnostics
+##------------------------
+# Generate Estimate Plot
+Estimate_Plot(fit0)
+# Generate GOF Plot
+GOF(fit0)
+# Generate Trace Plot
+Trace_Plot(fit0)
+# Generate Hysteresis plots for all structural parameter estimates
+hysteresis_results <- hysteresis(fit0,
+                                 networks_to_simulate = 1000,
+                                 burnin = 500,
+                                 range = 2,
+                                 steps = 20,
+                                 simulation_method = "Metropolis",
+                                 proposal_variance = 0.2)
+
+##-------------------------
+##  Edge Prediction
+##-------------------------
+fit0.2 <- conditional_edge_prediction(
+  GERGM_Object = fit0,
+  number_of_networks_to_simulate = 1000,
+  thin = 1,
+  proposal_variance = 0.5,
+  MCMC_burnin = 1000,
+  seed = 123)
+
+# set working directory where we want to save the file. Only outputs a PDF
+# because plotting is too slow in the graphics device.
+conditional_edge_prediction_plot(edge_prediction_results = fit0.2,
+                                 filename = "conditional_edge_prediction_fit0_2_v1.pdf",
+                                 plot_size = 20,
+                                 node_name_cex = 6)
+
+# make a scatter plot of predicted vs observed edge values
+conditional_edge_prediction_correlation_plot(edge_prediction_results = fit0.2)
+
+# set x and y limits manually
+conditional_edge_prediction_correlation_plot(edge_prediction_results = fit0.2,
+                                             xlim = c(-10,10),
+                                             ylim = c(-10,10))
 
 
-## SUMMARY OF PEOPLE IN COMPNET
-pcnt <- plyr::count(jbi$person_uuid)
-pcnt <- pcnt[order(pcnt$freq, decreasing = T), ]
-## SUMMARY OF COMPANIES IN jobs data filtered to compnent comapnies
-ocnt <- plyr::count(jbi$company_name_unique)
-ocnt <- ocnt[order(ocnt$freq, decreasing = T), ]
-print(ocnt)
+
+# 
+# ## SUMMARY OF PEOPLE IN COMPNET
+# pcnt <- plyr::count(jbi$person_uuid)
+# pcnt <- pcnt[order(pcnt$freq, decreasing = T), ]
+# ## SUMMARY OF COMPANIES IN jobs data filtered to compnent comapnies
+# ocnt <- plyr::count(jbi$company_name_unique)
+# ocnt <- ocnt[order(ocnt$freq, decreasing = T), ]
+# print(ocnt)
 
 
 # }
